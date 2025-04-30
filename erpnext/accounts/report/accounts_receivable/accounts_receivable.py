@@ -105,19 +105,23 @@ class ReceivablePayableReport:
 		self.prepare_ple_query()
 		self.data = []
 		self.voucher_balance = OrderedDict()
+		self.ple_to_allocate = []
 
 		with frappe.db.unbuffered_cursor():
 			for ple in frappe.db.sql(self.ple_query.get_sql(), as_dict=True, as_iterator=True):
 				self.init_voucher_balance(ple)  # invoiced, paid, credit_note, outstanding
-				self.update_voucher_balance(ple)
+				self.update_voucher_balance_or_defer(ple)
+
+		for ple in self.ple_to_allocate:
+			self.update_voucher_balance_or_defer(ple)
 
 		self.build_data()
 
 	def build_voucher_dict(self, ple):
-		voucher_type, voucher_no = self.get_voucher_type_and_name_for_ple(ple)
+		# voucher_type, voucher_no = self.get_voucher_type_and_name_for_ple(ple)
 		return frappe._dict(
-			voucher_type=voucher_type,
-			voucher_no=voucher_no,
+			voucher_type=ple.voucher_type,
+			voucher_no=ple.voucher_no,
 			party=ple.party,
 			party_account=ple.account,
 			posting_date=ple.posting_date,
@@ -143,11 +147,11 @@ class ReceivablePayableReport:
 		return voucher_type, voucher_no
 
 	def init_voucher_balance(self, ple):
-		voucher_type, voucher_no = self.get_voucher_type_and_name_for_ple(ple)
+		# voucher_type, voucher_no = self.get_voucher_type_and_name_for_ple(ple)
 		if self.filters.get("ignore_accounts"):
-			key = (voucher_type, voucher_no, ple.party)
+			key = (ple.voucher_type, ple.voucher_no, ple.party)
 		else:
-			key = (ple.account, voucher_type, voucher_no, ple.party)
+			key = (ple.account, ple.voucher_type, ple.voucher_no, ple.party)
 
 		if key not in self.voucher_balance:
 			self.voucher_balance[key] = self.build_voucher_dict(ple)
@@ -234,21 +238,22 @@ class ReceivablePayableReport:
 			_d.voucher_no = ple.against_voucher_no
 			row = self.voucher_balance[key] = _d
 
-		if not row:
-			# no invoice, this is an invoice / stand-alone payment / credit note
-			if self.filters.get("ignore_accounts"):
-				row = self.voucher_balance.get((ple.voucher_type, ple.voucher_no, ple.party))
-			else:
-				row = self.voucher_balance.get((ple.account, ple.voucher_type, ple.voucher_no, ple.party))
+		# if not row:
+		# 	# no invoice, this is an invoice / stand-alone payment / credit note
+		# 	if self.filters.get("ignore_accounts"):
+		# 		row = self.voucher_balance.get((ple.voucher_type, ple.voucher_no, ple.party))
+		# 	else:
+		# 		row = self.voucher_balance.get((ple.account, ple.voucher_type, ple.voucher_no, ple.party))
 
-		row.party_type = ple.party_type
+		# row.party_type = ple.party_type
 		return row
 
-	def update_voucher_balance(self, ple):
+	def update_voucher_balance_or_defer(self, ple):
 		# get the row where this balance needs to be updated
 		# if its a payment, it will return the linked invoice or will be considered as advance
 		row = self.get_voucher_balance(ple)
 		if not row:
+			self.ple_to_allocate.append(ple)
 			return
 
 		if self.filters.get("in_party_currency") or self.filters.get("party_account"):
