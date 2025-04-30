@@ -113,7 +113,7 @@ class ReceivablePayableReport:
 				self.update_voucher_balance_or_defer(ple)
 
 		for ple in self.ple_to_allocate:
-			self.update_voucher_balance_or_defer(ple)
+			self.update_voucher_balance_or_defer(ple, dont_defer=True)
 
 		self.build_data()
 
@@ -199,7 +199,7 @@ class ReceivablePayableReport:
 			"remaining_balance",
 		]
 
-	def get_voucher_balance(self, ple):
+	def get_voucher_balance(self, ple, dont_defer=False):
 		if self.filters.get("sales_person"):
 			if not (
 				ple.party in self.sales_person_records.get("Customer", [])
@@ -238,22 +238,26 @@ class ReceivablePayableReport:
 			_d.voucher_no = ple.against_voucher_no
 			row = self.voucher_balance[key] = _d
 
-		# if not row:
-		# 	# no invoice, this is an invoice / stand-alone payment / credit note
-		# 	if self.filters.get("ignore_accounts"):
-		# 		row = self.voucher_balance.get((ple.voucher_type, ple.voucher_no, ple.party))
-		# 	else:
-		# 		row = self.voucher_balance.get((ple.account, ple.voucher_type, ple.voucher_no, ple.party))
+		if not row and not dont_defer:
+			return
 
-		# row.party_type = ple.party_type
+		if not row:
+			# no invoice, this is an invoice / stand-alone payment / credit note
+			if self.filters.get("ignore_accounts"):
+				row = self.voucher_balance.get((ple.voucher_type, ple.voucher_no, ple.party))
+			else:
+				row = self.voucher_balance.get((ple.account, ple.voucher_type, ple.voucher_no, ple.party))
+
+		row.party_type = ple.party_type
 		return row
 
-	def update_voucher_balance_or_defer(self, ple):
+	def update_voucher_balance_or_defer(self, ple, dont_defer=False):
 		# get the row where this balance needs to be updated
 		# if its a payment, it will return the linked invoice or will be considered as advance
-		row = self.get_voucher_balance(ple)
+		row = self.get_voucher_balance(ple, dont_defer=dont_defer)
 		if not row:
-			self.ple_to_allocate.append(ple)
+			if not dont_defer:
+				self.ple_to_allocate.append(ple)
 			return
 
 		if self.filters.get("in_party_currency") or self.filters.get("party_account"):
